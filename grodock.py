@@ -61,13 +61,16 @@ def read_gro_file(input_file):
 	"""
 	Read gro file and generate Atom and Residue objects
 	@param input_file: gro file path
-	@return molecule[list]: [obj_residue, ...]
+	@return molecule(list), box_info(list): [obj_residue, ...], [x(float), y(float), z(float)]
 	"""
 	molecule = []
+	box_info = []
 	with open(input_file, "r") as obj_input:
 		for line_idx, line_val in enumerate(obj_input, 1):
 			if line_idx > 2:
-				if not RE_BOX.search(line_val):
+				if RE_BOX.search(line_val):
+					box_info = [float(v) for v in line_val.strip().split()]
+				else:
 					residue_name = line_val[5:10].strip()
 					residue_index = int(line_val[0:5].strip())
 
@@ -81,7 +84,7 @@ def read_gro_file(input_file):
 					atom.name = line_val[11:16].strip()
 					atom.coord = [float(v.strip()) for v in [line_val[20:28], line_val[28:36], line_val[36:44]]]
 					molecule[-1].append_atom(atom)
-	return molecule
+	return molecule, box_info
 
 
 
@@ -97,19 +100,26 @@ if __name__ == '__main__':
 	parser.add_argument("-O", dest = "flag_overwrite", action = "store_true", default = False, help = "overwrite forcibly")
 	args = parser.parse_args()
 
+
+	# ファイルのチェック
 	check_exist(args.pdb2gmx_file, 2)
 	check_exist(args.editconf_file, 2)
 	check_exist(args.pdb_ligand_file, 2)
 	check_exist(args.acpype_ligand_file, 2)
 	check_exist(args.map_file, 2)
 
+
 	# ATOMTYPE の対応マップ取得
 	corr_table = read_map(args.map_file)
 
+
+	# gro (生体分子) ファイルの読み込み
+	molecule_editconf, box_info = read_gro_file(args.editconf_file)
+
+
 	# 平行移動量の取得
-	molecule_pdb2gmx = read_gro_file(args.pdb2gmx_file)
-	molecule_editconf = read_gro_file(args.editconf_file)
 	shift_vector = np.zeros(3)	# 平行移動量
+	molecule_pdb2gmx, _ = read_gro_file(args.pdb2gmx_file)
 
 	coord_pdb2gmx = []
 	coord_editconf = []
@@ -138,6 +148,7 @@ if __name__ == '__main__':
 
 	coord_pdb2gmx = np.array(coord_pdb2gmx)
 	coord_editconf = np.array(coord_editconf)
+	del(molecule_pdb2gmx)
 
 	# shift しただけかの確認
 	diff_coord = coord_pdb2gmx - coord_editconf
@@ -148,60 +159,50 @@ if __name__ == '__main__':
 		sys.exit(1)
 
 
-	# pdb (リガンド) ファイルの読み込み
-	atoms = []
-	with open(args.pdb_ligand_file, "r") as obj_input:
-		for line_val in obj_input:
-			if line_val.startswith("ATOM") or line_val.startswith("HETATM"):
-				atom = Atom()
-				atom.name = line_val[12:17].strip()
-				atom.coord = [float(v.strip()) for v in [line_val[30:38], line_val[38:46], line_val[46:54]]]
-				atoms.append(atom)
-	if len(atoms) != len(corr_table.keys()):
-		sys.stderr.write("ERROR: number of atoms for ligand does not match with ATOMTYPE correspondence table.\n")
+	# gro (生体分子) ファイルの読み込み
+	biomolecule = molecule_editconf
+
+
+	# gro (リガンド) ファイルの読み込み
+	ligand, _ = read_gro_file(args.acpype_ligand_file)
+	if len(ligand[0].atoms) != len(corr_table.keys()):
+		sys.stderr.write("ERROR: number of atoms for ligand in {0} does not match with ATOMTYPE correspondence table.\n".format(args.acpype_ligand_file))
 		sys.exit(1)
 
 
-	# gro (生体分子) ファイルの読み込み
-	pdb_atom_names = [v.name for v in atoms]
-	corr_table_rev = {v: k for k, v in corr_table.items()}
+	# pdb (リガンド) ファイルの読み込みと座標書き換え
+	list_atomtype_ligand = [atom.name for atom in ligand[0].atoms]
+	with open(args.pdb_ligand_file, "r") as obj_input:
+		for line_val in obj_input:
+			if line_val.startswith("ATOM") or line_val.startswith("HETATM"):
+				atom_name = line_val[12:17].strip()
+				coord = [float(v.strip()) / 10 - shift_vector[i] for i, v in enumerate([line_val[30:38], line_val[38:46], line_val[46:54]])]
+				if atom_name not in corr_table.keys():
+					sys.stderr.write("ERROR: ATOMTYPE `{0}` not found in {1}\n".format(atom_name, args.map_file))
+					sys.exit(1)
+				atom_name = corr_table[atom_name]
+				atom_idx = list_atomtype_ligand.index(atom_name)
+				ligand[0].atoms[atom_idx].coord = coord
 
-	output_line = []
-	num_atom = 0
-	with open(args.editconf_file, "r") as obj_input:
-		# ボックス情報付きの Gqd 構造
-		for line_idx, line_val in enumerate(obj_input, 1):
-			output_line.append(line_val)
-			if line_idx > 2:
-				num_atom += 1
 
-	box_info = output_line.pop()
-	num_atom -= 1
+	# 系内の残基の番号振り直し
+	system = biomolecule + ligand
+	total_atom = 0
+	for residue_idx, obj_residue in enumerate(system, 1):
+		obj_residue.index = residue_idx
+		total_atom += len(obj_residue.atoms)
 
-	# gro (リガンド) ファイルの読み込み
-	with open(args.acpype_ligand_file, "r") as obj_input:
-		for line_idx, line_val in enumerate(obj_input, 1):
-			if line_idx > 2:
-				if not RE_BOX.search(line_val):
-					atom_name = line_val[11:16].strip()
-					pdb_atom_name = corr_table_rev[atom_name]
-					coord = [float(v) for v in atoms[pdb_atom_names.index(pdb_atom_name)].coord]
-					coord = np.array(coord)
-					coord = coord / 10 - shift_vector
-					coord = coord.tolist()
-					line_val = line_val[:20] + "".join(["{0:>8.3f}".format(v) for v in coord]) + "\n"
-					output_line.append(line_val)
-					num_atom += 1
 
-	output_line.pop()
-	num_atom -= 1
-	output_line[1] = "{0}\n".format(num_atom)
-	output_line.append(box_info)
-	output_line[0] = "{0} + {1} (coordinates for {2}) docked by grodock.py\n".format(args.editconf_file, args.acpype_ligand_file, args.pdb_ligand_file)
-
+	# ファイル出力
 	if args.flag_overwrite == False:
 		check_overwrite(args.output_file)
 
 	with open(args.output_file, "w") as obj_output:
-		for line_val in output_line:
-			obj_output.write(line_val)
+		obj_output.write("{0} + {1} (coordinates for {2}) docked by grodock.py\n".format(args.editconf_file, args.acpype_ligand_file, args.pdb_ligand_file))
+		obj_output.write("{0}\n".format(total_atom))
+		num_atom = 0
+		for obj_residue in system:
+			for obj_atom in obj_residue.atoms:
+				num_atom += 1
+				obj_output.write("{0:>5}{1:<5}{2:>5}{3:>5}{4[0]:>8.3f}{4[1]:>8.3f}{4[2]:>8.3f}\n".format(obj_residue.index, obj_residue.name, obj_atom.name, num_atom, obj_atom.coord))
+		obj_output.write("{0[0]:>10.5f} {0[1]:>10.5f} {0[2]:>10.5f}\n".format(box_info))
