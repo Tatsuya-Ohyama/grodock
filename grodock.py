@@ -110,7 +110,7 @@ if __name__ == '__main__':
 	parser.add_argument("-g", dest = "GRO_RECEPTOR_FILE", metavar = "GRO_RECEPTOR_FILE.gro", required = True, help = "biomolecules structure obtained from `gmx pdb2gmx`")
 	parser.add_argument("-p", dest = "PDB_LIGAND_FILE", metavar = "LIGAND.pdb", required = True, help = "ligand in complex structure")
 	parser.add_argument("-a", dest = "ACPYPE_LIGAND_FILE", metavar = "ACPYPE_LIGAND.gro", required = True, help = "ligand obtained from `acpype`")
-	parser.add_argument("-m", dest = "MAP_FILE", metavar = "MAP.txt", required = True, help = "mapping atomtype file (separated by comma or new line)\nEx. PDB_ATOM_TYPE: GRO_ATOM_TYPE, ...")
+	parser.add_argument("-m", dest = "MAP_FILE", metavar = "MAP.txt", help = "mapping atomtype file (separated by comma or new line)\nEx. PDB_ATOM_TYPE: GRO_ATOM_TYPE, ...\nNote: if no mapping file, mapped in the order of the atoms.")
 	parser.add_argument("-o", dest = "OUTPUT_FILE", metavar = "OUTPUT.gro", required = True, help = "output file for docked complex structure")
 	parser.add_argument("-O", dest = "FLAG_OVERWRITE", action = "store_true", default = False, help = "overwrite forcibly")
 	args = parser.parse_args()
@@ -119,33 +119,55 @@ if __name__ == '__main__':
 	check_exist(args.GRO_RECEPTOR_FILE, 2)
 	check_exist(args.PDB_LIGAND_FILE, 2)
 	check_exist(args.ACPYPE_LIGAND_FILE, 2)
-	check_exist(args.MAP_FILE, 2)
-
-	# ATOMTYPE の対応マップ取得
-	corr_table = read_map(args.MAP_FILE)
+	if args.MAP_FILE is not None:
+		check_exist(args.MAP_FILE, 2)
 
 	# gro (生体分子) ファイルの読み込み
 	biomolecule, box_info = read_gro_file(args.GRO_RECEPTOR_FILE)
 
 	# gro (リガンド) ファイルの読み込み
 	ligand, _ = read_gro_file(args.ACPYPE_LIGAND_FILE)
-	if len(ligand[0].atoms) != len(corr_table.keys()):
-		sys.stderr.write("ERROR: number of atoms for ligand in {0} does not match with ATOMTYPE correspondence table.\n".format(args.ACPYPE_LIGAND_FILE))
-		sys.exit(1)
+
+	# ATOMTYPE の対応マップ取得と整合性のチェック
+	corr_table = {}
+	corr_list = []
+	if args.MAP_FILE is not None:
+		# マップファイルあり
+		corr_table = read_map(args.MAP_FILE)
+		if len(ligand[0].atoms) != len(corr_table.keys()):
+			sys.stderr.write("ERROR: number of atoms for ligand in {0} does not match with ATOMTYPE correspondence table.\n".format(args.ACPYPE_LIGAND_FILE))
+			sys.exit(1)
+	else:
+		# マップファイルなし
+		corr_list = [obj_atom.name for obj_atom in ligand[0].atoms]
 
 	# pdb (リガンド) ファイルの読み込みと座標書き換え
 	list_atomtype_ligand = [atom.name for atom in ligand[0].atoms]
+	atom_idx = 0
 	with open(args.PDB_LIGAND_FILE, "r") as obj_input:
 		for line_val in obj_input:
 			if line_val.startswith("ATOM") or line_val.startswith("HETATM"):
 				atom_name = line_val[12:17].strip()
 				coord = [float(v.strip()) / 10 for i, v in enumerate([line_val[30:38], line_val[38:46], line_val[46:54]])]
-				if atom_name not in corr_table.keys():
-					sys.stderr.write("ERROR: ATOMTYPE `{0}` not found in {1}\n".format(atom_name, args.MAP_FILE))
-					sys.exit(1)
-				atom_name = corr_table[atom_name]
-				atom_idx = list_atomtype_ligand.index(atom_name)
-				ligand[0].atoms[atom_idx].coord = coord
+
+				if args.MAP_FILE is None:
+					# マップファイルなし
+					atom_name = corr_list[atom_idx]
+					ligand[0].atoms[atom_idx].coord = coord
+					atom_idx += 1
+					if atom_idx > len(corr_list):
+						atom_idx = 0
+
+				else:
+					# マップファイルあり
+					if atom_name not in corr_table.keys():
+						sys.stderr.write("ERROR: ATOMTYPE `{0}` not found in {1}\n".format(atom_name, args.MAP_FILE))
+						sys.exit(1)
+
+					atom_name = corr_table[atom_name]
+					atom_idx = list_atomtype_ligand.index(atom_name)
+					ligand[0].atoms[atom_idx].coord = coord
+
 
 	# 系内の残基の番号振り直し
 	system = biomolecule + ligand
