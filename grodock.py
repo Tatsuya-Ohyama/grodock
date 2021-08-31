@@ -26,9 +26,13 @@ THRESHOLD = 0.001
 # =============== function =============== #
 def read_map(input_file):
 	"""
-	ATOMTYPE の対応マップファイルを読み込む関数
-	@param input_file: マップファイル
-	@return corr_table(dict): ATOMTYPE の対応マップの dict
+	Function to read map file of correspondence table for ATOMTYPE
+
+	Args:
+		input_file (str): map file
+
+	Returns:
+		dict: {pdb_atomtype: gro_atomtype, ...}
 	"""
 	corr_table = {}
 	list_term = []
@@ -42,6 +46,7 @@ def read_map(input_file):
 			else:
 				list_term.append(line_val)
 
+	flag_duplicate = False
 	for term in [v for v in list_term if len(v) != 0]:
 		key, val = term.split(":")
 		obj_match = RE_QUOTED_TERM.match(key)
@@ -51,17 +56,28 @@ def read_map(input_file):
 		if obj_match:
 			val = obj_match.group(1)
 
+		if key in corr_table.keys():
+			sys.stderr.write("ERROR: duplicated atomtypes `{0}` are found.\n".format(key))
+			flag_duplicate = True
+
 		corr_table[key] = val
+
+	if flag_duplicate:
+		sys.exit(1)
 
 	return corr_table
 
 
-
 def read_gro_file(input_file):
 	"""
-	Read gro file and generate Atom and Residue objects
-	@param input_file: gro file path
-	@return molecule(list), box_info(list): [obj_residue, ...], [x(float), y(float), z(float)]
+	Function to read gro file and generate Atom and Residue objects
+
+	Args:
+		input_file (str): gro file path
+
+	Returns:
+		list: molecule: [obj_residue, ...]
+		list: box_info: [x(float), y(float), z(float)]
 	"""
 	molecule = []
 	box_info = []
@@ -91,99 +107,45 @@ def read_gro_file(input_file):
 # =============== main =============== #
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description = "grodock.py - docking (structure merge) tool for gromacs", formatter_class=argparse.RawTextHelpFormatter)
-	parser.add_argument("-g", dest = "pdb2gmx_file", metavar = "PDB2GMX_FILE.gro", required = True, help = "biomolecules structure obtained from `gmx pdb2gmx`")
-	parser.add_argument("-e", dest = "editconf_file", metavar = "EDITCONF_FILE.gro", required = True, help = "biomolecule structure obtained from `gmx editconf`")
-	parser.add_argument("-p", dest = "pdb_ligand_file", metavar = "LIGAND.pdb", required = True, help = "ligand in complex structure")
-	parser.add_argument("-a", dest = "acpype_ligand_file", metavar = "ACPYPE_LIGAND.gro", required = True, help = "ligand obtained from `acpype`")
-	parser.add_argument("-m", dest = "map_file", metavar = "MAP.txt", required = True, help = "mapping atomtype file (separated by comma or new line)\nEx. PDB_ATOM_TYPE: GRO_ATOM_TYPE, ...")
-	parser.add_argument("-o", dest = "output_file", metavar = "OUTPUT.gro", required = True, help = "output file for docked complex structure")
-	parser.add_argument("-O", dest = "flag_overwrite", action = "store_true", default = False, help = "overwrite forcibly")
+	parser.add_argument("-g", dest = "GRO_RECEPTOR_FILE", metavar = "GRO_RECEPTOR_FILE.gro", required = True, help = "biomolecules structure obtained from `gmx pdb2gmx`")
+	parser.add_argument("-p", dest = "PDB_LIGAND_FILE", metavar = "LIGAND.pdb", required = True, help = "ligand in complex structure")
+	parser.add_argument("-a", dest = "ACPYPE_LIGAND_FILE", metavar = "ACPYPE_LIGAND.gro", required = True, help = "ligand obtained from `acpype`")
+	parser.add_argument("-m", dest = "MAP_FILE", metavar = "MAP.txt", required = True, help = "mapping atomtype file (separated by comma or new line)\nEx. PDB_ATOM_TYPE: GRO_ATOM_TYPE, ...")
+	parser.add_argument("-o", dest = "OUTPUT_FILE", metavar = "OUTPUT.gro", required = True, help = "output file for docked complex structure")
+	parser.add_argument("-O", dest = "FLAG_OVERWRITE", action = "store_true", default = False, help = "overwrite forcibly")
 	args = parser.parse_args()
 
-
 	# ファイルのチェック
-	check_exist(args.pdb2gmx_file, 2)
-	check_exist(args.editconf_file, 2)
-	check_exist(args.pdb_ligand_file, 2)
-	check_exist(args.acpype_ligand_file, 2)
-	check_exist(args.map_file, 2)
-
+	check_exist(args.GRO_RECEPTOR_FILE, 2)
+	check_exist(args.PDB_LIGAND_FILE, 2)
+	check_exist(args.ACPYPE_LIGAND_FILE, 2)
+	check_exist(args.MAP_FILE, 2)
 
 	# ATOMTYPE の対応マップ取得
-	corr_table = read_map(args.map_file)
-
-
-	# gro (生体分子) ファイルの読み込み
-	molecule_editconf, box_info = read_gro_file(args.editconf_file)
-
-
-	# 平行移動量の取得
-	shift_vector = np.zeros(3)	# 平行移動量
-	molecule_pdb2gmx, _ = read_gro_file(args.pdb2gmx_file)
-
-	coord_pdb2gmx = []
-	coord_editconf = []
-	for residue_pdb2gmx in molecule_pdb2gmx:
-		list_residue_editconf = [residue_editconf for residue_editconf in molecule_editconf if residue_pdb2gmx.id == residue_editconf.id]
-		if len(list_residue_editconf) == 0:
-			sys.stderr.write("ERROR: {0} not found.\n".format(residue_pdb2gmx.id))
-			sys.exit(1)
-		if len(list_residue_editconf) > 1:
-			sys.stderr.write("ERROR: multiple residues having the same id found: {0}.\n".format(residue_pdb2gmx.id))
-			sys.exit(1)
-		residue_editconf = list_residue_editconf[0]
-
-		for atom_pdb2gmx in residue_pdb2gmx.atoms:
-			list_atom_editconf = [atom_editconf for atom_editconf in residue_editconf.atoms if atom_pdb2gmx.name == atom_editconf.name]
-			if len(list_atom_editconf) == 0:
-				sys.stderr.write("ERROR: {1} in {0} not found.\n".format(residue_pdb2gmx.id, atom_pdb2gmx.name))
-				sys.exit(1)
-			if len(list_atom_editconf) > 1:
-				sys.stderr.write("ERROR: multiple atoms having the same name found in {0}.\n".format(residue_pdb2gmx.id))
-				sys.exit(1)
-			atom_editconf = list_atom_editconf[0]
-
-			coord_pdb2gmx.append(atom_pdb2gmx.coord)
-			coord_editconf.append(atom_editconf.coord)
-
-	coord_pdb2gmx = np.array(coord_pdb2gmx)
-	coord_editconf = np.array(coord_editconf)
-	del(molecule_pdb2gmx)
-
-	# shift しただけかの確認
-	diff_coord = coord_pdb2gmx - coord_editconf
-	shift_vector = np.mean(diff_coord, axis = 0)
-	if not np.all(diff_coord - shift_vector < THRESHOLD):
-		# 平行移動量と平行移動量の平均が同一でない場合、回転が加わっている可能性があるため、警告を表示して終了
-		sys.stderr.write("ERROR: `editconf` added rotate operation!!!\nThis program cannot dock.\n")
-		sys.exit(1)
-
+	corr_table = read_map(args.MAP_FILE)
 
 	# gro (生体分子) ファイルの読み込み
-	biomolecule = molecule_editconf
-
+	biomolecule, box_info = read_gro_file(args.GRO_RECEPTOR_FILE)
 
 	# gro (リガンド) ファイルの読み込み
-	ligand, _ = read_gro_file(args.acpype_ligand_file)
+	ligand, _ = read_gro_file(args.ACPYPE_LIGAND_FILE)
 	if len(ligand[0].atoms) != len(corr_table.keys()):
-		sys.stderr.write("ERROR: number of atoms for ligand in {0} does not match with ATOMTYPE correspondence table.\n".format(args.acpype_ligand_file))
+		sys.stderr.write("ERROR: number of atoms for ligand in {0} does not match with ATOMTYPE correspondence table.\n".format(args.ACPYPE_LIGAND_FILE))
 		sys.exit(1)
-
 
 	# pdb (リガンド) ファイルの読み込みと座標書き換え
 	list_atomtype_ligand = [atom.name for atom in ligand[0].atoms]
-	with open(args.pdb_ligand_file, "r") as obj_input:
+	with open(args.PDB_LIGAND_FILE, "r") as obj_input:
 		for line_val in obj_input:
 			if line_val.startswith("ATOM") or line_val.startswith("HETATM"):
 				atom_name = line_val[12:17].strip()
-				coord = [float(v.strip()) / 10 - shift_vector[i] for i, v in enumerate([line_val[30:38], line_val[38:46], line_val[46:54]])]
+				coord = [float(v.strip()) / 10 for i, v in enumerate([line_val[30:38], line_val[38:46], line_val[46:54]])]
 				if atom_name not in corr_table.keys():
-					sys.stderr.write("ERROR: ATOMTYPE `{0}` not found in {1}\n".format(atom_name, args.map_file))
+					sys.stderr.write("ERROR: ATOMTYPE `{0}` not found in {1}\n".format(atom_name, args.MAP_FILE))
 					sys.exit(1)
 				atom_name = corr_table[atom_name]
 				atom_idx = list_atomtype_ligand.index(atom_name)
 				ligand[0].atoms[atom_idx].coord = coord
-
 
 	# 系内の残基の番号振り直し
 	system = biomolecule + ligand
@@ -192,13 +154,12 @@ if __name__ == '__main__':
 		obj_residue.index = residue_idx
 		total_atom += len(obj_residue.atoms)
 
-
 	# ファイル出力
-	if args.flag_overwrite == False:
-		check_overwrite(args.output_file)
+	if args.FLAG_OVERWRITE == False:
+		check_overwrite(args.OUTPUT_FILE)
 
-	with open(args.output_file, "w") as obj_output:
-		obj_output.write("{0} + {1} (coordinates for {2}) docked by grodock.py\n".format(args.editconf_file, args.acpype_ligand_file, args.pdb_ligand_file))
+	with open(args.OUTPUT_FILE, "w") as obj_output:
+		obj_output.write("{0} (coordinates for {1}) docked by grodock.py\n".format(args.ACPYPE_LIGAND_FILE, args.PDB_LIGAND_FILE))
 		obj_output.write("{0}\n".format(total_atom))
 		num_atom = 0
 		for obj_residue in system:
