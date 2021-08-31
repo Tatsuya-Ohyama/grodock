@@ -91,7 +91,7 @@ def read_gro_file(input_file):
 					residue_name = line_val[5:10].strip()
 					residue_index = int(line_val[0:5].strip())
 
-					if len(molecule) == 0 or molecule[-1].id != "{0}.{1}".format(residue_name, residue_index):
+					if len(molecule) == 0 or "{0}.{1}".format(molecule[-1].name, molecule[-1].number) != "{0}.{1}".format(residue_name, residue_index):
 						residue = Residue(residue_name, residue_index)
 						molecule.append(residue)
 
