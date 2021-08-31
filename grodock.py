@@ -92,13 +92,10 @@ def read_gro_file(input_file):
 					residue_index = int(line_val[0:5].strip())
 
 					if len(molecule) == 0 or molecule[-1].id != "{0}.{1}".format(residue_name, residue_index):
-						residue = Residue()
-						residue.name = residue_name
-						residue.index = residue_index
+						residue = Residue(residue_name, residue_index)
 						molecule.append(residue)
 
-					atom = Atom()
-					atom.name = line_val[11:16].strip()
+					atom = Atom(line_val[10:15].strip(), line_val[15:20].strip())
 					atom.coord = [float(v.strip()) for v in [line_val[20:28], line_val[28:36], line_val[36:44]]]
 					molecule[-1].append_atom(atom)
 	return molecule, box_info
