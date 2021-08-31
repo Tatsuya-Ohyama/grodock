@@ -12,15 +12,16 @@ import argparse
 import re
 import numpy as np
 
-from basic_func import check_exist, check_overwrite
-from basic_class import TemplateClass
-from molecule_objects import Atom, Residue
+from mods.func_prompt_io import check_exist, check_overwrite
+from mods.molecule_objects import Atom, Residue
+
 
 
 # =============== variable =============== #
 RE_QUOTED_TERM = re.compile(r"^[\"'](.+)[\"']$")
 RE_BOX = re.compile(r'^(\s+\d+\.\d+){3}\s*$')
 THRESHOLD = 0.001
+
 
 
 # =============== function =============== #
@@ -106,42 +107,42 @@ def read_gro_file(input_file):
 
 # =============== main =============== #
 if __name__ == '__main__':
-	parser = argparse.ArgumentParser(description = "grodock.py - docking (structure merge) tool for gromacs", formatter_class=argparse.RawTextHelpFormatter)
-	parser.add_argument("-g", dest = "GRO_RECEPTOR_FILE", metavar = "GRO_RECEPTOR_FILE.gro", required = True, help = "biomolecules structure obtained from `gmx pdb2gmx`")
-	parser.add_argument("-p", dest = "PDB_LIGAND_FILE", metavar = "LIGAND.pdb", required = True, help = "ligand in complex structure")
-	parser.add_argument("-a", dest = "ACPYPE_LIGAND_FILE", metavar = "ACPYPE_LIGAND.gro", required = True, help = "ligand obtained from `acpype`")
-	parser.add_argument("-m", dest = "MAP_FILE", metavar = "MAP.txt", help = "mapping atomtype file (separated by comma or new line)\nEx. PDB_ATOM_TYPE: GRO_ATOM_TYPE, ...\nNote: if no mapping file, mapped in the order of the atoms.")
-	parser.add_argument("-o", dest = "OUTPUT_FILE", metavar = "OUTPUT.gro", required = True, help = "output file for docked complex structure")
-	parser.add_argument("-O", dest = "FLAG_OVERWRITE", action = "store_true", default = False, help = "overwrite forcibly")
+	parser = argparse.ArgumentParser(description="grodock.py - docking (structure merge) tool for gromacs", formatter_class=argparse.RawTextHelpFormatter)
+	parser.add_argument("-g", dest="GRO_RECEPTOR_FILE", metavar="GRO_RECEPTOR_FILE.gro", required=True, help="biomolecules structure obtained from `gmx pdb2gmx`")
+	parser.add_argument("-p", dest="PDB_LIGAND_FILE", metavar="LIGAND.pdb", required=True, help="ligand in complex structure")
+	parser.add_argument("-a", dest="ACPYPE_LIGAND_FILE", metavar="ACPYPE_LIGAND.gro", required=True, help="ligand obtained from `acpype`")
+	parser.add_argument("-m", dest="MAP_FILE", metavar="MAP.txt", help="mapping atomtype file (separated by comma or new line)\nEx. PDB_ATOM_TYPE: GRO_ATOM_TYPE, ...\nNote: if no mapping file, mapped in the order of the atoms.")
+	parser.add_argument("-o", dest="OUTPUT_FILE", metavar="OUTPUT.gro", required=True, help="output file for docked complex structure")
+	parser.add_argument("-O", dest="FLAG_OVERWRITE", action="store_true", default=False, help="overwrite forcibly")
 	args = parser.parse_args()
 
-	# ファイルのチェック
+	# check file
 	check_exist(args.GRO_RECEPTOR_FILE, 2)
 	check_exist(args.PDB_LIGAND_FILE, 2)
 	check_exist(args.ACPYPE_LIGAND_FILE, 2)
 	if args.MAP_FILE is not None:
 		check_exist(args.MAP_FILE, 2)
 
-	# gro (生体分子) ファイルの読み込み
+	# read gro (biomolecule)
 	biomolecule, box_info = read_gro_file(args.GRO_RECEPTOR_FILE)
 
-	# gro (リガンド) ファイルの読み込み
+	# read gro (ligand)
 	ligand, _ = read_gro_file(args.ACPYPE_LIGAND_FILE)
 
-	# ATOMTYPE の対応マップ取得と整合性のチェック
+	# read coresponding map of ATOMTYPE and check consistency of ATOMTYPE
 	corr_table = {}
 	corr_list = []
 	if args.MAP_FILE is not None:
-		# マップファイルあり
+		# when specify map file
 		corr_table = read_map(args.MAP_FILE)
 		if len(ligand[0].atoms) != len(corr_table.keys()):
 			sys.stderr.write("ERROR: number of atoms for ligand in {0} does not match with ATOMTYPE correspondence table.\n".format(args.ACPYPE_LIGAND_FILE))
 			sys.exit(1)
 	else:
-		# マップファイルなし
+		# when specify no map file
 		corr_list = [obj_atom.name for obj_atom in ligand[0].atoms]
 
-	# pdb (リガンド) ファイルの読み込みと座標書き換え
+	# read pdb (ligand) and replace coordinates
 	list_atomtype_ligand = [atom.name for atom in ligand[0].atoms]
 	atom_idx = 0
 	with open(args.PDB_LIGAND_FILE, "r") as obj_input:
@@ -151,7 +152,7 @@ if __name__ == '__main__':
 				coord = [float(v.strip()) / 10 for i, v in enumerate([line_val[30:38], line_val[38:46], line_val[46:54]])]
 
 				if args.MAP_FILE is None:
-					# マップファイルなし
+					# when specify no map file
 					atom_name = corr_list[atom_idx]
 					ligand[0].atoms[atom_idx].coord = coord
 					atom_idx += 1
@@ -159,7 +160,7 @@ if __name__ == '__main__':
 						atom_idx = 0
 
 				else:
-					# マップファイルあり
+					# when specify map file
 					if atom_name not in corr_table.keys():
 						sys.stderr.write("ERROR: ATOMTYPE `{0}` not found in {1}\n".format(atom_name, args.MAP_FILE))
 						sys.exit(1)
@@ -169,14 +170,14 @@ if __name__ == '__main__':
 					ligand[0].atoms[atom_idx].coord = coord
 
 
-	# 系内の残基の番号振り直し
+	# reassign residue index
 	system = biomolecule + ligand
 	total_atom = 0
 	for residue_idx, obj_residue in enumerate(system, 1):
 		obj_residue.index = residue_idx
 		total_atom += len(obj_residue.atoms)
 
-	# ファイル出力
+	# output file
 	if args.FLAG_OVERWRITE == False:
 		check_overwrite(args.OUTPUT_FILE)
 
