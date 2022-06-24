@@ -10,7 +10,6 @@ signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 import argparse
 import re
-import numpy as np
 
 from mods.func_prompt_io import check_exist, check_overwrite
 from mods.molecule_objects import Atom, Residue
