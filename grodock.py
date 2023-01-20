@@ -149,7 +149,12 @@ if __name__ == '__main__':
 
 				if args.MAP_FILE is None:
 					# when specify no map file
-					atom_name = corr_list[atom_idx]
+					try:
+						atom_name = corr_list[atom_idx]
+					except IndexError:
+						sys.stderr.write("ERROR: number of ligand atoms does not match. Missing hydrogen atoms?\n")
+						sys.exit(1)
+
 					ligand[0].atoms[atom_idx].coord = coord
 					atom_idx += 1
 					if atom_idx > len(corr_list):
